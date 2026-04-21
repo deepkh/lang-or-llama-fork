@@ -139,6 +139,21 @@ def create_retriever(vector_store: QdrantVectorStore) -> VectorIndexRetriever:
     )
 
 
+def print_retrieved_nodes(
+        retriever: VectorIndexRetriever,
+        query_text: str,
+) -> None:
+    nodes = retriever.retrieve(query_text)
+
+    print("Retrieved nodes:")
+    for rank, node_with_score in enumerate(nodes, start=1):
+        print(f"\nRank: {rank}")
+        print(f"Score: {node_with_score.score}")
+        print(f"Metadata: {node_with_score.node.metadata}")
+        print("Text:")
+        print(node_with_score.node.get_content())
+
+
 def create_prompt_template() -> ChatPromptTemplate:
     system_prompt = ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT)
     user_prompt = ChatMessage(role=MessageRole.USER, content=USER_PROMPT)
@@ -196,12 +211,16 @@ def run_etl_and_query() -> None:
             transformations=create_ingestion_transforms(),
         )
 
+        retriever = create_retriever(vector_store)
+        print_retrieved_nodes(retriever, QUERY_TEXT)
+
         query_engine = create_query_engine(
-            retriever=create_retriever(vector_store),
+            retriever=retriever,
             prompt_template=create_prompt_template(),
             llm=create_llm(),
         )
 
+        print("\nAnswer:")
         response = query_engine.query(QUERY_TEXT)
         print(response)
     finally:
