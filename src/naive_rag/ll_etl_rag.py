@@ -144,13 +144,15 @@ def create_retriever(vector_store: QdrantVectorStore) -> VectorIndexRetriever:
 
 def print_retrieved_nodes(
         retriever: VectorIndexRetriever,
-        reranker: BaseNodePostprocessor,
         query_text: str,
+        title: str,
+        reranker: BaseNodePostprocessor | None = None,
 ) -> None:
     nodes = retriever.retrieve(query_text)
-    nodes = reranker.postprocess_nodes(nodes, query_str=query_text)
+    if reranker is not None:
+        nodes = reranker.postprocess_nodes(nodes, query_str=query_text)
 
-    print("Reranked retrieved nodes:")
+    print(title)
     for rank, node_with_score in enumerate(nodes, start=1):
         print(f"\nRank: {rank}")
         print(f"Score: {node_with_score.score}")
@@ -186,21 +188,24 @@ def create_llm() -> Ollama:
 
 def create_query_engine(
         retriever: VectorIndexRetriever,
-        reranker: BaseNodePostprocessor,
         prompt_template: ChatPromptTemplate,
         llm: Ollama,
+        reranker: BaseNodePostprocessor | None = None,
 ) -> RetrieverQueryEngine:
     response_synthesizer = get_response_synthesizer(
         llm=llm,
         text_qa_template=prompt_template,
     )
+    node_postprocessors: list[BaseNodePostprocessor] = []
+    if reranker is not None:
+        node_postprocessors.append(reranker)
+    node_postprocessors.append(
+        MetadataExclusionPostProcessor(["page_label", "file_path"])
+    )
 
     return RetrieverQueryEngine(
         retriever=retriever,
-        node_postprocessors=[
-            reranker,
-            MetadataExclusionPostProcessor(["page_label", "file_path"]),
-        ],
+        node_postprocessors=node_postprocessors,
         response_synthesizer=response_synthesizer,
     )
 
@@ -226,19 +231,54 @@ def run_etl_and_query() -> None:
         )
 
         retriever = create_retriever(vector_store)
-        reranker = create_reranker()
-        print_retrieved_nodes(retriever, reranker, QUERY_TEXT)
+        prompt_template = create_prompt_template()
+        llm = create_llm()
 
-        query_engine = create_query_engine(
+        #
+        # Answers without reranker
+        #
+        print_retrieved_nodes(
             retriever=retriever,
-            reranker=reranker,
-            prompt_template=create_prompt_template(),
-            llm=create_llm(),
+            query_text=QUERY_TEXT,
+            title="Retrieved nodes without reranker:",
         )
 
-        print("\nAnswer:")
-        response = query_engine.query(QUERY_TEXT)
-        print(response)
+        query_engine_without_reranker = create_query_engine(
+            retriever=retriever,
+            prompt_template=prompt_template,
+            llm=llm,
+        )
+
+        print("\n============Without reranker:============")
+        response_without_reranker = query_engine_without_reranker.query(QUERY_TEXT)
+        
+
+        #
+        # Answers with reranker
+        #
+        reranker = create_reranker()
+        print_retrieved_nodes(
+            retriever=retriever,
+            query_text=QUERY_TEXT,
+            title="\nReranked retrieved nodes:",
+            reranker=reranker,
+        )
+
+        query_engine_with_reranker = create_query_engine(
+            retriever=retriever,
+            prompt_template=prompt_template,
+            llm=llm,
+            reranker=reranker,
+        )
+
+        print("\n============With reranker:============")
+        response_with_reranker = query_engine_with_reranker.query(QUERY_TEXT)
+
+
+        print("\n============Answer without reranker:============")
+        print(response_without_reranker)
+        print("\n============Answer with reranker:============")
+        print(response_with_reranker)
     finally:
         delete_collection(db_client, COLLECTION_NAME)
 
