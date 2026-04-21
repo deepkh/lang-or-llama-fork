@@ -10,7 +10,7 @@ from llama_index.core.prompts.base import ChatPromptTemplate
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.llms.openai import OpenAI
+from llama_index.llms.ollama import Ollama
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
@@ -58,7 +58,11 @@ def _get_customized_prompt_template():
 
 def _get_customized_llm():
     """LLM that synthesizes the answer from the prompt"""
-    return OpenAI(model="gpt-3.5-turbo", temperature=0.0001)
+    return Ollama(
+        model="qwen3:4b",
+        base_url="http://127.0.0.1:11434",
+        request_timeout=120.0,
+    )
 
 
 def _get_retriever():
@@ -80,7 +84,7 @@ def _get_retriever():
 
     retriever = VectorIndexRetriever(
         index=index,
-        similarity_top_k=3,
+        similarity_top_k=6,
     )
 
     return retriever
