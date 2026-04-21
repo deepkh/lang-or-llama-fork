@@ -1,5 +1,7 @@
 import os
-from typing import Optional
+import time
+from collections.abc import Callable
+from typing import Any, Optional, TypeVar
 
 from llama_index.core import Document
 from llama_index.core import VectorStoreIndex, get_response_synthesizer
@@ -52,6 +54,23 @@ Given the context information and not prior knowledge, answer the query.
 Query: {query}
 Answer:
 """
+
+
+T = TypeVar("T")
+
+
+def timed_call(
+        label: str,
+        function: Callable[..., T],
+        *args: Any,
+        **kwargs: Any,
+) -> T:
+    started_at = time.perf_counter()
+    try:
+        return function(*args, **kwargs)
+    finally:
+        elapsed = time.perf_counter() - started_at
+        print(f"[timing] {label}: {elapsed:.3f}s")
 
 
 class MetadataExclusionPostProcessor(BaseNodePostprocessor):
@@ -223,48 +242,68 @@ def run_etl_and_query() -> None:
     vector_store = create_vector_store(db_client, COLLECTION_NAME)
 
     try:
-        documents = load_documents()
-        ingest_documents(
+        documents = timed_call("load documents", load_documents)
+        transformations = timed_call(
+            "create ingestion transforms",
+            create_ingestion_transforms,
+        )
+        timed_call(
+            "ingest documents",
+            ingest_documents,
             documents=documents,
             vector_store=vector_store,
-            transformations=create_ingestion_transforms(),
+            transformations=transformations,
         )
 
-        retriever = create_retriever(vector_store)
-        prompt_template = create_prompt_template()
-        llm = create_llm()
+        retriever = timed_call("create retriever", create_retriever, vector_store)
+        prompt_template = timed_call(
+            "create prompt template",
+            create_prompt_template,
+        )
+        llm = timed_call("create llm", create_llm)
 
         #
         # Answers without reranker
         #
-        print_retrieved_nodes(
+        timed_call(
+            "retrieve nodes without reranker",
+            print_retrieved_nodes,
             retriever=retriever,
             query_text=QUERY_TEXT,
             title="Retrieved nodes without reranker:",
         )
 
-        query_engine_without_reranker = create_query_engine(
+        query_engine_without_reranker = timed_call(
+            "create query engine without reranker",
+            create_query_engine,
             retriever=retriever,
             prompt_template=prompt_template,
             llm=llm,
         )
 
         print("\n============Without reranker:============")
-        response_without_reranker = query_engine_without_reranker.query(QUERY_TEXT)
-        
+        response_without_reranker = timed_call(
+            "query without reranker",
+            query_engine_without_reranker.query,
+            QUERY_TEXT,
+        )
 
         #
         # Answers with reranker
         #
-        reranker = create_reranker()
-        print_retrieved_nodes(
+        reranker = timed_call("create reranker", create_reranker)
+        timed_call(
+            "retrieve and rerank nodes",
+            print_retrieved_nodes,
             retriever=retriever,
             query_text=QUERY_TEXT,
             title="\nReranked retrieved nodes:",
             reranker=reranker,
         )
 
-        query_engine_with_reranker = create_query_engine(
+        query_engine_with_reranker = timed_call(
+            "create query engine with reranker",
+            create_query_engine,
             retriever=retriever,
             prompt_template=prompt_template,
             llm=llm,
@@ -272,15 +311,23 @@ def run_etl_and_query() -> None:
         )
 
         print("\n============With reranker:============")
-        response_with_reranker = query_engine_with_reranker.query(QUERY_TEXT)
-
+        response_with_reranker = timed_call(
+            "query with reranker",
+            query_engine_with_reranker.query,
+            QUERY_TEXT,
+        )
 
         print("\n============Answer without reranker:============")
         print(response_without_reranker)
         print("\n============Answer with reranker:============")
         print(response_with_reranker)
     finally:
-        delete_collection(db_client, COLLECTION_NAME)
+        timed_call(
+            "delete qdrant collection",
+            delete_collection,
+            db_client,
+            COLLECTION_NAME,
+        )
 
 
 if __name__ == "__main__":
