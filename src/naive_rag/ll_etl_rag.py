@@ -9,6 +9,7 @@ from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.indices.vector_store import VectorIndexRetriever
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.postprocessor.sbert_rerank import SentenceTransformerRerank
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.prompts.base import ChatPromptTemplate
 from llama_index.core.query_engine import RetrieverQueryEngine
@@ -32,6 +33,8 @@ EMBEDDING_CACHE_FOLDER = os.path.expanduser("~/.cache/huggingface/hub")
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 128
 SIMILARITY_TOP_K = 6
+RERANKER_MODEL_NAME = "Qwen/Qwen3-Reranker-0.6B"
+RERANKER_TOP_N = SIMILARITY_TOP_K
 
 SYSTEM_PROMPT = """You are an expert Q&A system that is trusted around the world.
 Always answer the query using the provided context information, and not prior knowledge.
@@ -141,11 +144,13 @@ def create_retriever(vector_store: QdrantVectorStore) -> VectorIndexRetriever:
 
 def print_retrieved_nodes(
         retriever: VectorIndexRetriever,
+        reranker: BaseNodePostprocessor,
         query_text: str,
 ) -> None:
     nodes = retriever.retrieve(query_text)
+    nodes = reranker.postprocess_nodes(nodes, query_str=query_text)
 
-    print("Retrieved nodes:")
+    print("Reranked retrieved nodes:")
     for rank, node_with_score in enumerate(nodes, start=1):
         print(f"\nRank: {rank}")
         print(f"Score: {node_with_score.score}")
@@ -164,6 +169,13 @@ def create_prompt_template() -> ChatPromptTemplate:
     )
 
 
+def create_reranker() -> SentenceTransformerRerank:
+    return SentenceTransformerRerank(
+        model=RERANKER_MODEL_NAME,
+        top_n=RERANKER_TOP_N,
+    )
+
+
 def create_llm() -> Ollama:
     return Ollama(
         model=OLLAMA_MODEL,
@@ -174,6 +186,7 @@ def create_llm() -> Ollama:
 
 def create_query_engine(
         retriever: VectorIndexRetriever,
+        reranker: BaseNodePostprocessor,
         prompt_template: ChatPromptTemplate,
         llm: Ollama,
 ) -> RetrieverQueryEngine:
@@ -185,6 +198,7 @@ def create_query_engine(
     return RetrieverQueryEngine(
         retriever=retriever,
         node_postprocessors=[
+            reranker,
             MetadataExclusionPostProcessor(["page_label", "file_path"]),
         ],
         response_synthesizer=response_synthesizer,
@@ -212,10 +226,12 @@ def run_etl_and_query() -> None:
         )
 
         retriever = create_retriever(vector_store)
-        print_retrieved_nodes(retriever, QUERY_TEXT)
+        reranker = create_reranker()
+        print_retrieved_nodes(retriever, reranker, QUERY_TEXT)
 
         query_engine = create_query_engine(
             retriever=retriever,
+            reranker=reranker,
             prompt_template=create_prompt_template(),
             llm=create_llm(),
         )
